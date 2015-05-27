@@ -37,6 +37,15 @@
 // combined profile for all the executed benchmarks to file,
 // today they write only the profile for the last benchmark executed.
 //
+// Example
+//
+// Assuming the base version of the compiler has been saved with
+// ``toolstash save,'' this sequence compares the old and new compiler:
+//
+//	compilebench -count 10 -compile $(toolstash -n compile) >old.txt
+//	compilebench -count 10 >new.txt
+//	benchstat old.txt new.txt
+//
 package main
 
 import (
@@ -126,7 +135,7 @@ func runCmd(name string, cmd *exec.Cmd) {
 	if err != nil {
 		log.Fatalf("%v: %v\n%s", name, err, out)
 	}
-	fmt.Printf("Benchmark%s 1 %d ns/op\n", name, time.Since(start).Nanoseconds())
+	fmt.Printf("%s 1 %d ns/op\n", name, time.Since(start).Nanoseconds())
 }
 
 func runBuild(name, dir string) {
@@ -182,7 +191,7 @@ func runBuild(name, dir string) {
 		}
 	}
 
-	fmt.Printf("Benchmark%s 1 %d ns/op %d B/op %d allocs/op\n", name, end.Sub(start).Nanoseconds(), bytes, allocs)
+	fmt.Printf("%s 1 %d ns/op %d B/op %d allocs/op\n", name, end.Sub(start).Nanoseconds(), bytes, allocs)
 
 	if *flagMemprofile != "" {
 		if err := ioutil.WriteFile(*flagMemprofile, out, 0666); err != nil {
