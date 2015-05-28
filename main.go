@@ -10,10 +10,11 @@
 //
 // It times the compilation of various packages and prints results in
 // the format used by package testing (and expected by rsc.io/benchstat).
-// Each compilation actually runs twice, once for timing and again to
-// gather allocation statistics.
 //
 // The options are:
+//
+//	-alloc
+//		Report allocations.
 //
 //	-compile exe
 //		Use exe as the path to the cmd/compile binary.
@@ -30,12 +31,22 @@
 //	-memprofile file
 //		Write a memory profile of the compiler to file.
 //
+//	-memprofilerate rate
+//		Set runtime.MemProfileRate during compilation.
+//
 //	-run regexp
 //		Only run benchmarks with names matching regexp.
 //
 // Although -cpuprofile and -memprofile are intended to write a
 // combined profile for all the executed benchmarks to file,
 // today they write only the profile for the last benchmark executed.
+//
+// The default memory profiling rate is one profile sample per 512 kB
+// allocated (see ``go doc runtime.MemProfileRate'').
+// Lowering the rate (for example, -memprofilerate 64000) produces
+// a more fine-grained and therefore accurate profile, but it also incurs
+// execution cost. For benchmark comparisons, never use timings
+// obtained with a low -memprofilerate option.
 //
 // Example
 //
@@ -70,12 +81,14 @@ var (
 )
 
 var (
-	flagCompiler      = flag.String("compile", "", "use `exe` as the cmd/compile binary")
-	flagCompilerFlags = flag.String("compileflags", "", "additional `flags` to pass to compile")
-	flagRun           = flag.String("run", "", "run benchmarks matching `regexp`")
-	flagCount         = flag.Int("count", 1, "run benchmarks `n` times")
-	flagCpuprofile    = flag.String("cpuprofile", "", "write CPU profile to `file`")
-	flagMemprofile    = flag.String("memprofile", "", "write memory profile to `file`")
+	flagAlloc          = flag.Bool("alloc", false, "report allocations")
+	flagCompiler       = flag.String("compile", "", "use `exe` as the cmd/compile binary")
+	flagCompilerFlags  = flag.String("compileflags", "", "additional `flags` to pass to compile")
+	flagRun            = flag.String("run", "", "run benchmarks matching `regexp`")
+	flagCount          = flag.Int("count", 1, "run benchmarks `n` times")
+	flagCpuprofile     = flag.String("cpuprofile", "", "write CPU profile to `file`")
+	flagMemprofile     = flag.String("memprofile", "", "write memory profile to `file`")
+	flagMemprofilerate = flag.Int64("memprofilerate", -1, "set memory profile `rate`")
 )
 
 var tests = []struct {
@@ -144,59 +157,59 @@ func runBuild(name, dir string) {
 		log.Fatal(err)
 	}
 	args := []string{"-o", "_compilebench_.o"}
+	if *flagMemprofilerate >= 0 {
+		args = append(args, "-memprofilerate", fmt.Sprint(*flagMemprofilerate))
+	}
 	args = append(args, strings.Fields(*flagCompilerFlags)...)
+	if *flagAlloc || *flagCpuprofile != "" || *flagMemprofile != "" {
+		if *flagAlloc || *flagMemprofile != "" {
+			args = append(args, "-memprofile", "_compilebench_.memprof")
+		}
+		if *flagCpuprofile != "" {
+			args = append(args, "-cpuprofile", "_compilebench_.cpuprof")
+		}
+	}
 	args = append(args, pkg.GoFiles...)
 	cmd := exec.Command(compiler, args...)
 	cmd.Dir = pkg.Dir
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
 	start := time.Now()
-	out, err := cmd.CombinedOutput()
+	err = cmd.Run()
 	if err != nil {
-		log.Fatalf("%v: %v\n%s", name, err, out)
+		log.Fatalf("%v: %v", name, err)
 	}
 	end := time.Now()
 
-	args = []string{"-o", "_compilebench_.o"}
-	args = append(args, strings.Fields(*flagCompilerFlags)...)
-	args = append(args, "-memprofile", "_compilebench_.memprof", "-memprofilerate", fmt.Sprint(64*1024))
-	if *flagCpuprofile != "" {
-		args = append(args, "-cpuprofile", "_compilebench_.cpuprof")
-	}
-	args = append(args, pkg.GoFiles...)
-	cmd = exec.Command(compiler, args...)
-	cmd.Dir = pkg.Dir
-	out, err = cmd.CombinedOutput()
-	if err != nil {
-		log.Fatalf("%v: %v\n%s", name, err, out)
-	}
-
-	out, err = ioutil.ReadFile(pkg.Dir + "/_compilebench_.memprof")
-	if err != nil {
-		log.Fatal("cannot find memory profile after compilation")
-	}
 	var allocs, bytes int64
-	for _, line := range strings.Split(string(out), "\n") {
-		f := strings.Fields(line)
-		if len(f) < 4 || f[0] != "#" || f[2] != "=" {
-			continue
-		}
-		val, err := strconv.ParseInt(f[3], 0, 64)
+	if *flagAlloc || *flagMemprofile != "" {
+		out, err := ioutil.ReadFile(pkg.Dir + "/_compilebench_.memprof")
 		if err != nil {
-			continue
+			log.Fatal("cannot find memory profile after compilation")
 		}
-		switch f[1] {
-		case "TotalAlloc":
-			bytes = val
-		case "Mallocs":
-			allocs = val
+		for _, line := range strings.Split(string(out), "\n") {
+			f := strings.Fields(line)
+			if len(f) < 4 || f[0] != "#" || f[2] != "=" {
+				continue
+			}
+			val, err := strconv.ParseInt(f[3], 0, 64)
+			if err != nil {
+				continue
+			}
+			switch f[1] {
+			case "TotalAlloc":
+				bytes = val
+			case "Mallocs":
+				allocs = val
+			}
 		}
-	}
 
-	fmt.Printf("%s 1 %d ns/op %d B/op %d allocs/op\n", name, end.Sub(start).Nanoseconds(), bytes, allocs)
-
-	if *flagMemprofile != "" {
-		if err := ioutil.WriteFile(*flagMemprofile, out, 0666); err != nil {
-			log.Fatal(err)
+		if *flagMemprofile != "" {
+			if err := ioutil.WriteFile(*flagMemprofile, out, 0666); err != nil {
+				log.Fatal(err)
+			}
 		}
+		os.Remove(pkg.Dir + "/_compilebench_.memprof")
 	}
 
 	if *flagCpuprofile != "" {
@@ -210,6 +223,11 @@ func runBuild(name, dir string) {
 		os.Remove(pkg.Dir + "/_compilebench_.cpuprof")
 	}
 
+	if *flagAlloc {
+		fmt.Printf("%s 1 %d ns/op %d B/op %d allocs/op\n", name, end.Sub(start).Nanoseconds(), bytes, allocs)
+	} else {
+		fmt.Printf("%s 1 %d ns/op\n", name, end.Sub(start).Nanoseconds())
+	}
+
 	os.Remove(pkg.Dir + "/_compilebench_.o")
-	os.Remove(pkg.Dir + "/_compilebench_.memprof")
 }
