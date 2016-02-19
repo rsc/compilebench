@@ -67,6 +67,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -78,6 +79,7 @@ var (
 	goroot   = runtime.GOROOT()
 	compiler string
 	runRE    *regexp.Regexp
+	is6g     bool
 )
 
 var (
@@ -98,6 +100,9 @@ var tests = []struct {
 	{"BenchmarkTemplate", "html/template"},
 	{"BenchmarkGoTypes", "go/types"},
 	{"BenchmarkCompiler", "cmd/compile/internal/gc"},
+	{"BenchmarkMakeBash", ""},
+	{"BenchmarkHelloSize", ""},
+	{"BenchmarkCmdGoSize", ""},
 }
 
 func usage() {
@@ -120,7 +125,12 @@ func main() {
 	if compiler == "" {
 		out, err := exec.Command("go", "tool", "-n", "compile").CombinedOutput()
 		if err != nil {
-			log.Fatalf("go tool -n compiler: %v\n%s", err, out)
+			out, err = exec.Command("go", "tool", "-n", "6g").CombinedOutput()
+			is6g = true
+			if err != nil {
+				out, err = exec.Command("go", "tool", "-n", "compile").CombinedOutput()
+				log.Fatalf("go tool -n compiler: %v\n%s", err, out)
+			}
 		}
 		compiler = strings.TrimSpace(string(out))
 	}
@@ -151,12 +161,71 @@ func runCmd(name string, cmd *exec.Cmd) {
 	fmt.Printf("%s 1 %d ns/op\n", name, time.Since(start).Nanoseconds())
 }
 
+func runMakeBash() {
+	cmd := exec.Command("./make.bash")
+	cmd.Dir = filepath.Join(runtime.GOROOT(), "src")
+	runCmd("BenchmarkMakeBash", cmd)
+}
+
+func runCmdGoSize() {
+	runSize("BenchmarkCmdGoSize", filepath.Join(runtime.GOROOT(), "bin/go"))
+}
+
+func runHelloSize() {
+	cmd := exec.Command("go", "build", "-o", "_hello_", filepath.Join(runtime.GOROOT(), "test/helloworld.go"))
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		log.Fatal(err)
+	}
+	runSize("BenchmarkHelloSize", "_hello_")
+}
+
+func runSize(name, file string) {
+	info, err := os.Stat(file)
+	if err != nil {
+		log.Fatal(err)
+	}
+	out, err := exec.Command("size", file).CombinedOutput()
+	if err != nil {
+		log.Fatalf("size: %v\n%s", err, out)
+	}
+	lines := strings.Split(string(out), "\n")
+	if len(lines) < 2 {
+		log.Fatal("not enough output from size: %s", out)
+	}
+	f := strings.Fields(lines[1])
+	if strings.HasPrefix(lines[0], "__TEXT") && len(f) >= 2 { // OS X
+		fmt.Printf("%s 1 %s text-bytes %s data-bytes %v exe-bytes\n", name, f[0], f[1], info.Size())
+	} else if strings.Contains(lines[0], "bss") && len(f) >= 3 {
+		fmt.Printf("%s 1 %s text-bytes %s data-bytes %s bss-bytes %v exe-bytes\n", name, f[0], f[1], f[2], info.Size())
+	}
+}
+
 func runBuild(name, dir string) {
+	switch name {
+	case "BenchmarkMakeBash":
+		runMakeBash()
+		return
+	case "BenchmarkCmdGoSize":
+		runCmdGoSize()
+		return
+	case "BenchmarkHelloSize":
+		runHelloSize()
+		return
+	}
+
 	pkg, err := build.Import(dir, ".", 0)
 	if err != nil {
 		log.Fatal(err)
 	}
 	args := []string{"-o", "_compilebench_.o"}
+	if is6g {
+		*flagMemprofilerate = 0
+		*flagAlloc = false
+		*flagCpuprofile = ""
+		*flagMemprofile = ""
+	}
 	if *flagMemprofilerate >= 0 {
 		args = append(args, "-memprofilerate", fmt.Sprint(*flagMemprofilerate))
 	}
