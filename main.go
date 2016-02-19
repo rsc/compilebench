@@ -156,7 +156,8 @@ func runCmd(name string, cmd *exec.Cmd) {
 	start := time.Now()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Fatalf("%v: %v\n%s", name, err, out)
+		log.Printf("%v: %v\n%s", name, err, out)
+		return
 	}
 	fmt.Printf("%s 1 %d ns/op\n", name, time.Since(start).Nanoseconds())
 }
@@ -176,7 +177,8 @@ func runHelloSize() {
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return
 	}
 	runSize("BenchmarkHelloSize", "_hello_")
 }
@@ -184,15 +186,18 @@ func runHelloSize() {
 func runSize(name, file string) {
 	info, err := os.Stat(file)
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return
 	}
 	out, err := exec.Command("size", file).CombinedOutput()
 	if err != nil {
-		log.Fatalf("size: %v\n%s", err, out)
+		log.Printf("size: %v\n%s", err, out)
+		return
 	}
 	lines := strings.Split(string(out), "\n")
 	if len(lines) < 2 {
-		log.Fatal("not enough output from size: %s", out)
+		log.Printf("not enough output from size: %s", out)
+		return
 	}
 	f := strings.Fields(lines[1])
 	if strings.HasPrefix(lines[0], "__TEXT") && len(f) >= 2 { // OS X
@@ -217,7 +222,8 @@ func runBuild(name, dir string) {
 
 	pkg, err := build.Import(dir, ".", 0)
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return
 	}
 	args := []string{"-o", "_compilebench_.o"}
 	if is6g {
@@ -246,7 +252,8 @@ func runBuild(name, dir string) {
 	start := time.Now()
 	err = cmd.Run()
 	if err != nil {
-		log.Fatalf("%v: %v", name, err)
+		log.Printf("%v: %v", name, err)
+		return
 	}
 	end := time.Now()
 
@@ -254,7 +261,7 @@ func runBuild(name, dir string) {
 	if *flagAlloc || *flagMemprofile != "" {
 		out, err := ioutil.ReadFile(pkg.Dir + "/_compilebench_.memprof")
 		if err != nil {
-			log.Fatal("cannot find memory profile after compilation")
+			log.Print("cannot find memory profile after compilation")
 		}
 		for _, line := range strings.Split(string(out), "\n") {
 			f := strings.Fields(line)
@@ -275,7 +282,7 @@ func runBuild(name, dir string) {
 
 		if *flagMemprofile != "" {
 			if err := ioutil.WriteFile(*flagMemprofile, out, 0666); err != nil {
-				log.Fatal(err)
+				log.Print(err)
 			}
 		}
 		os.Remove(pkg.Dir + "/_compilebench_.memprof")
@@ -284,10 +291,10 @@ func runBuild(name, dir string) {
 	if *flagCpuprofile != "" {
 		out, err := ioutil.ReadFile(pkg.Dir + "/_compilebench_.cpuprof")
 		if err != nil {
-			log.Fatal(err)
+			log.Print(err)
 		}
 		if err := ioutil.WriteFile(*flagCpuprofile, out, 0666); err != nil {
-			log.Fatal(err)
+			log.Print(err)
 		}
 		os.Remove(pkg.Dir + "/_compilebench_.cpuprof")
 	}
