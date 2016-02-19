@@ -227,7 +227,7 @@ func runBuild(name, dir string) {
 	}
 	args := []string{"-o", "_compilebench_.o"}
 	if is6g {
-		*flagMemprofilerate = 0
+		*flagMemprofilerate = -1
 		*flagAlloc = false
 		*flagCpuprofile = ""
 		*flagMemprofile = ""
