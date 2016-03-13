@@ -98,6 +98,7 @@ var tests = []struct {
 	dir  string
 }{
 	{"BenchmarkTemplate", "html/template"},
+	{"BenchmarkUnicode", "unicode"},
 	{"BenchmarkGoTypes", "go/types"},
 	{"BenchmarkCompiler", "cmd/compile/internal/gc"},
 	{"BenchmarkMakeBash", ""},
