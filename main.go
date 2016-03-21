@@ -181,6 +181,7 @@ func runHelloSize() {
 		log.Print(err)
 		return
 	}
+	defer os.Remove("_hello_")
 	runSize("BenchmarkHelloSize", "_hello_")
 }
 
