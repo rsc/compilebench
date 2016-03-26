@@ -91,19 +91,21 @@ var (
 	flagCpuprofile     = flag.String("cpuprofile", "", "write CPU profile to `file`")
 	flagMemprofile     = flag.String("memprofile", "", "write memory profile to `file`")
 	flagMemprofilerate = flag.Int64("memprofilerate", -1, "set memory profile `rate`")
+	flagShort          = flag.Bool("short", false, "skip long-running benchmarks")
 )
 
 var tests = []struct {
 	name string
 	dir  string
+	long bool
 }{
-	{"BenchmarkTemplate", "html/template"},
-	{"BenchmarkUnicode", "unicode"},
-	{"BenchmarkGoTypes", "go/types"},
-	{"BenchmarkCompiler", "cmd/compile/internal/gc"},
-	{"BenchmarkMakeBash", ""},
-	{"BenchmarkHelloSize", ""},
-	{"BenchmarkCmdGoSize", ""},
+	{"BenchmarkTemplate", "html/template", false},
+	{"BenchmarkUnicode", "unicode", false},
+	{"BenchmarkGoTypes", "go/types", false},
+	{"BenchmarkCompiler", "cmd/compile/internal/gc", false},
+	{"BenchmarkMakeBash", "", true},
+	{"BenchmarkHelloSize", "", false},
+	{"BenchmarkCmdGoSize", "", false},
 }
 
 func usage() {
@@ -146,6 +148,9 @@ func main() {
 
 	for i := 0; i < *flagCount; i++ {
 		for _, tt := range tests {
+			if tt.long && *flagShort {
+				continue
+			}
 			if runRE == nil || runRE.MatchString(tt.name) {
 				runBuild(tt.name, tt.dir)
 			}
