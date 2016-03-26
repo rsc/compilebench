@@ -301,10 +301,13 @@ func runBuild(name, dir string) {
 		os.Remove(pkg.Dir + "/_compilebench_.cpuprof")
 	}
 
+	wallns := end.Sub(start).Nanoseconds()
+	userns := cmd.ProcessState.UserTime().Nanoseconds()
+
 	if *flagAlloc {
-		fmt.Printf("%s 1 %d ns/op %d B/op %d allocs/op\n", name, end.Sub(start).Nanoseconds(), bytes, allocs)
+		fmt.Printf("%s 1 %d ns/op %d user-ns/op %d B/op %d allocs/op\n", name, wallns, userns, bytes, allocs)
 	} else {
-		fmt.Printf("%s 1 %d ns/op\n", name, end.Sub(start).Nanoseconds())
+		fmt.Printf("%s 1 %d ns/op %d user-ns/op\n", name, wallns, userns)
 	}
 
 	os.Remove(pkg.Dir + "/_compilebench_.o")
