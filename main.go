@@ -105,7 +105,7 @@ var tests = []struct {
 	{"BenchmarkCompiler", "cmd/compile/internal/gc", false},
 	{"BenchmarkMakeBash", "", true},
 	{"BenchmarkHelloSize", "", false},
-	{"BenchmarkCmdGoSize", "", false},
+	{"BenchmarkCmdGoSize", "", true},
 }
 
 func usage() {
