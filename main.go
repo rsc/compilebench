@@ -16,8 +16,8 @@
 //	-alloc
 //		Report allocations.
 //
-//	-compile exe
-//		Use exe as the path to the cmd/compile binary.
+//	-toolexec exe
+//		Pass exe to the go command's -toolexec flag.
 //
 //	-compileflags 'list'
 //		Pass the space-separated list of flags to the compilation.
@@ -53,7 +53,7 @@
 // Assuming the base version of the compiler has been saved with
 // ``toolstash save,'' this sequence compares the old and new compiler:
 //
-//	compilebench -count 10 -compile $(toolstash -n compile) >old.txt
+//	compilebench -count 10 -toolexec toolstash > old.txt
 //	compilebench -count 10 >new.txt
 //	benchstat old.txt new.txt
 //
@@ -84,7 +84,7 @@ var (
 
 var (
 	flagAlloc          = flag.Bool("alloc", false, "report allocations")
-	flagCompiler       = flag.String("compile", "", "use `exe` as the cmd/compile binary")
+	flagToolexec       = flag.String("toolexec", "", "pass `exe` to cmd/go's -toolexec flag")
 	flagCompilerFlags  = flag.String("compileflags", "", "additional `flags` to pass to compile")
 	flagRun            = flag.String("run", "", "run benchmarks matching `regexp`")
 	flagCount          = flag.Int("count", 1, "run benchmarks `n` times")
@@ -124,19 +124,28 @@ func main() {
 		usage()
 	}
 
-	compiler = *flagCompiler
-	if compiler == "" {
-		out, err := exec.Command("go", "tool", "-n", "compile").CombinedOutput()
+	var exe string
+	var baseargs []string
+	if *flagToolexec != "" {
+		exe = *flagToolexec
+	} else {
+		exe = "go"
+		baseargs = []string{"tool"}
+	}
+	out, err := exec.Command(exe, append(baseargs, "-n", "compile")...).CombinedOutput()
+	if err != nil {
+		out, err = exec.Command(exe, append(baseargs, "-n", "6g")...).CombinedOutput()
+		is6g = true
 		if err != nil {
-			out, err = exec.Command("go", "tool", "-n", "6g").CombinedOutput()
-			is6g = true
-			if err != nil {
-				out, err = exec.Command("go", "tool", "-n", "compile").CombinedOutput()
+			out, err = exec.Command(exe, append(baseargs, "tool", "-n", "compile")...).CombinedOutput()
+			if *flagToolexec != "" {
+				log.Fatalf("%s -n compiler: %v\n%s", *flagToolexec, err, out)
+			} else {
 				log.Fatalf("go tool -n compiler: %v\n%s", err, out)
 			}
 		}
-		compiler = strings.TrimSpace(string(out))
 	}
+	compiler = strings.TrimSpace(string(out))
 
 	if *flagRun != "" {
 		r, err := regexp.Compile(*flagRun)
@@ -169,14 +178,24 @@ func runCmd(name string, cmd *exec.Cmd) {
 }
 
 func runStdCmd() {
-	cmd := exec.Command("go", "build", "-a", "std", "cmd")
+	args := []string{"build", "-a"}
+	if *flagToolexec != "" {
+		args = append(args, "-toolexec", *flagToolexec)
+	}
+	args = append(args, "std", "cmd")
+	cmd := exec.Command("go", args...)
 	cmd.Dir = filepath.Join(runtime.GOROOT(), "src")
 	runCmd("BenchmarkStdCmd", cmd)
 }
 
 // path is either a path to a file ("$GOROOT/test/helloworld.go") or a package path ("cmd/go").
 func runSize(name, path string) {
-	cmd := exec.Command("go", "build", "-o", "_compilebenchout_", path)
+	args := []string{"build", "-o", "_compilebenchout_"}
+	if *flagToolexec != "" {
+		args = append(args, "-toolexec", *flagToolexec)
+	}
+	args = append(args, path)
+	cmd := exec.Command("go", args...)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
