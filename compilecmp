@@ -1,0 +1,54 @@
+#!/bin/bash
+
+set -e
+[ $# = 2 ] || (echo 'usage: compilecmp oldrev newrev' >&2; exit 2)
+cd $(go env GOROOT)
+
+old=$1
+case "$old" in
+201[0-9]-*)
+	old=$(git rev-list -n 1 --before="$old" origin/master)
+esac
+
+new=$2
+case "$new" in
+201[0-9]-*)
+	new=$(git rev-list -n 1 --before="$new" origin/master)
+esac
+
+echo OLD $old:
+git log -n1 $old
+echo
+echo NEW $new:
+git log -n1 $new
+echo
+
+rm -rf /tmp/compilecmp.{old,new}
+mkdir /tmp/compilecmp.old /tmp/compilecmp.new
+git archive --format=tar $old | tar -C /tmp/compilecmp.old -xf -
+git archive --format=tar $new | tar -C /tmp/compilecmp.new -xf -
+export GOROOT=/XXX
+cd /tmp/compilecmp.old/src
+echo OLD >../VERSION
+./make.bash
+cd /tmp/compilecmp.new/src
+echo NEW >../VERSION
+./make.bash
+cd /tmp/compilecmp.old
+oldcompile=$(GOROOT=/tmp/compilecmp.old go tool -n compile)
+GOROOT=/tmp/compilecmp.new GOPATH=/tmp/compilecmp.old/pkg/bootstrap go build -o $oldcompile bootstrap/compile
+GOROOT=/tmp/compilecmp.old go install std
+
+for i in Template Unicode GoTypes
+do
+	echo OLD $old built with $new
+	GOROOT=/tmp/compilecmp.old compilebench -count=10 -run=$i -compileflags='-bench=/dev/stdout -p='$i 2>&1 | tee -a /tmp/compilecmp.old/times
+	echo NEW $new built with $new
+	GOROOT=/tmp/compilecmp.new compilebench -count=10 -run=$i -compileflags='-bench=/dev/stdout -p='$i 2>&1 | tee -a /tmp/compilecmp.new/times
+done
+echo
+echo
+echo BENCHSTAT
+echo
+echo
+benchstat /tmp/compilecmp.{old,new}/times
