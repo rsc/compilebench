@@ -37,6 +37,10 @@
 //	-run regexp
 //		Only run benchmarks with names matching regexp.
 //
+//	-torture
+//		Include benchmarks that stress the compiler.
+//		WARNING: Running these can make your computer unstable.
+//
 // Although -cpuprofile and -memprofile are intended to write a
 // combined profile for all the executed benchmarks to file,
 // today they write only the profile for the last benchmark executed.
@@ -60,13 +64,16 @@
 package main
 
 import (
+	"compress/gzip"
 	"flag"
 	"fmt"
 	"go/build"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -92,6 +99,7 @@ var (
 	flagMemprofile     = flag.String("memprofile", "", "write memory profile to `file`")
 	flagMemprofilerate = flag.Int64("memprofilerate", -1, "set memory profile `rate`")
 	flagShort          = flag.Bool("short", false, "skip long-running benchmarks")
+	flagTorture        = flag.Bool("torture", false, "include compiler torture tests")
 )
 
 var tests = []struct {
@@ -161,8 +169,50 @@ func main() {
 				continue
 			}
 			if runRE == nil || runRE.MatchString(tt.name) {
-				runBuild(tt.name, tt.dir)
+				runBuild(tt.name, tt.dir, "")
 			}
+		}
+	}
+
+	if *flagTorture {
+		// Assume that this code is where go get would put it.
+		testdata := filepath.FromSlash(os.ExpandEnv("$GOPATH/src/rsc.io/compilebench/testdata"))
+		files, err := filepath.Glob(filepath.Join(testdata, "*.go.gz"))
+		if err != nil {
+			log.Fatalf("failed to find torture tests: %v", err)
+		}
+		if len(files) == 0 {
+			log.Fatalf("could not find torture tests; looked in %q", testdata)
+		}
+		var r *gzip.Reader
+		for _, file := range files {
+			f, err := os.Open(file)
+			if err != nil {
+				log.Fatal(err)
+			}
+			if r == nil {
+				r, err = gzip.NewReader(f)
+			} else {
+				err = r.Reset(f)
+			}
+			if err != nil {
+				log.Fatal(err)
+			}
+			tmp, err := ioutil.TempFile("", "compilebench")
+			if err != nil {
+				log.Fatal(err)
+			}
+			_, err = io.Copy(tmp, r)
+			if err != nil {
+				log.Fatal(err)
+			}
+			_, name := path.Split(file)
+			name = strings.TrimSuffix(name, ".go.gz")
+			name = "Benchmark" + strings.Title(name)
+			if runRE == nil || runRE.MatchString(name) {
+				runBuild(name, testdata, tmp.Name())
+			}
+			os.Remove(tmp.Name())
 		}
 	}
 }
@@ -226,7 +276,7 @@ func runSize(name, path string) {
 	}
 }
 
-func runBuild(name, dir string) {
+func runBuild(name, dir, file string) {
 	switch name {
 	case "BenchmarkStdCmd":
 		runStdCmd()
@@ -239,10 +289,22 @@ func runBuild(name, dir string) {
 		return
 	}
 
-	pkg, err := build.Import(dir, ".", 0)
-	if err != nil {
-		log.Print(err)
-		return
+	var files []string
+	var pkgdir string
+	switch {
+	case file != "":
+		files = []string{file}
+		pkgdir = dir
+	case dir != "":
+		pkg, err := build.Import(dir, ".", 0)
+		if err != nil {
+			log.Print(err)
+			return
+		}
+		files = pkg.GoFiles
+		pkgdir = pkg.Dir
+	default:
+		log.Fatal("internal error: dir or file must be set")
 	}
 	args := []string{"-o", "_compilebench_.o"}
 	if is6g {
@@ -263,14 +325,13 @@ func runBuild(name, dir string) {
 			args = append(args, "-cpuprofile", "_compilebench_.cpuprof")
 		}
 	}
-	args = append(args, pkg.GoFiles...)
+	args = append(args, files...)
 	cmd := exec.Command(compiler, args...)
-	cmd.Dir = pkg.Dir
+	cmd.Dir = pkgdir
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	start := time.Now()
-	err = cmd.Run()
-	if err != nil {
+	if err := cmd.Run(); err != nil {
 		log.Printf("%v: %v", name, err)
 		return
 	}
@@ -278,7 +339,7 @@ func runBuild(name, dir string) {
 
 	var allocs, bytes int64
 	if *flagAlloc || *flagMemprofile != "" {
-		out, err := ioutil.ReadFile(pkg.Dir + "/_compilebench_.memprof")
+		out, err := ioutil.ReadFile(pkgdir + "/_compilebench_.memprof")
 		if err != nil {
 			log.Print("cannot find memory profile after compilation")
 		}
@@ -304,18 +365,18 @@ func runBuild(name, dir string) {
 				log.Print(err)
 			}
 		}
-		os.Remove(pkg.Dir + "/_compilebench_.memprof")
+		os.Remove(pkgdir + "/_compilebench_.memprof")
 	}
 
 	if *flagCpuprofile != "" {
-		out, err := ioutil.ReadFile(pkg.Dir + "/_compilebench_.cpuprof")
+		out, err := ioutil.ReadFile(pkgdir + "/_compilebench_.cpuprof")
 		if err != nil {
 			log.Print(err)
 		}
 		if err := ioutil.WriteFile(*flagCpuprofile, out, 0666); err != nil {
 			log.Print(err)
 		}
-		os.Remove(pkg.Dir + "/_compilebench_.cpuprof")
+		os.Remove(pkgdir + "/_compilebench_.cpuprof")
 	}
 
 	wallns := end.Sub(start).Nanoseconds()
@@ -327,5 +388,5 @@ func runBuild(name, dir string) {
 		fmt.Printf("%s 1 %d ns/op %d user-ns/op\n", name, wallns, userns)
 	}
 
-	os.Remove(pkg.Dir + "/_compilebench_.o")
+	os.Remove(pkgdir + "/_compilebench_.o")
 }
