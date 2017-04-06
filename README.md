@@ -1,3 +1,1 @@
-go get [-u] rsc.io/compilebench
-
-https://godoc.org/rsc.io/compilebench
+compilebench is moving. Please use golang.org/x/tools/cmd/compilebench instead.
