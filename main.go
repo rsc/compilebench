@@ -16,8 +16,8 @@
 //	-alloc
 //		Report allocations.
 //
-//	-compile exe
-//		Use exe as the path to the cmd/compile binary.
+//	-toolexec exe
+//		Pass exe to the go command's -toolexec flag.
 //
 //	-compileflags 'list'
 //		Pass the space-separated list of flags to the compilation.
@@ -53,7 +53,7 @@
 // Assuming the base version of the compiler has been saved with
 // ``toolstash save,'' this sequence compares the old and new compiler:
 //
-//	compilebench -count 10 -compile $(toolstash -n compile) >old.txt
+//	compilebench -count 10 -toolexec toolstash > old.txt
 //	compilebench -count 10 >new.txt
 //	benchstat old.txt new.txt
 //
@@ -84,7 +84,7 @@ var (
 
 var (
 	flagAlloc          = flag.Bool("alloc", false, "report allocations")
-	flagCompiler       = flag.String("compile", "", "use `exe` as the cmd/compile binary")
+	flagToolexec       = flag.String("toolexec", "", "pass `exe` to cmd/go's -toolexec flag")
 	flagCompilerFlags  = flag.String("compileflags", "", "additional `flags` to pass to compile")
 	flagRun            = flag.String("run", "", "run benchmarks matching `regexp`")
 	flagCount          = flag.Int("count", 1, "run benchmarks `n` times")
@@ -103,7 +103,7 @@ var tests = []struct {
 	{"BenchmarkUnicode", "unicode", false},
 	{"BenchmarkGoTypes", "go/types", false},
 	{"BenchmarkCompiler", "cmd/compile/internal/gc", false},
-	{"BenchmarkMakeBash", "", true},
+	{"BenchmarkStdCmd", "", true},
 	{"BenchmarkHelloSize", "", false},
 	{"BenchmarkCmdGoSize", "", true},
 }
@@ -124,19 +124,28 @@ func main() {
 		usage()
 	}
 
-	compiler = *flagCompiler
-	if compiler == "" {
-		out, err := exec.Command("go", "tool", "-n", "compile").CombinedOutput()
+	var exe string
+	var baseargs []string
+	if *flagToolexec != "" {
+		exe = *flagToolexec
+	} else {
+		exe = "go"
+		baseargs = []string{"tool"}
+	}
+	out, err := exec.Command(exe, append(baseargs, "-n", "compile")...).CombinedOutput()
+	if err != nil {
+		out, err = exec.Command(exe, append(baseargs, "-n", "6g")...).CombinedOutput()
+		is6g = true
 		if err != nil {
-			out, err = exec.Command("go", "tool", "-n", "6g").CombinedOutput()
-			is6g = true
-			if err != nil {
-				out, err = exec.Command("go", "tool", "-n", "compile").CombinedOutput()
+			out, err = exec.Command(exe, append(baseargs, "tool", "-n", "compile")...).CombinedOutput()
+			if *flagToolexec != "" {
+				log.Fatalf("%s -n compiler: %v\n%s", *flagToolexec, err, out)
+			} else {
 				log.Fatalf("go tool -n compiler: %v\n%s", err, out)
 			}
 		}
-		compiler = strings.TrimSpace(string(out))
 	}
+	compiler = strings.TrimSpace(string(out))
 
 	if *flagRun != "" {
 		r, err := regexp.Compile(*flagRun)
@@ -168,35 +177,38 @@ func runCmd(name string, cmd *exec.Cmd) {
 	fmt.Printf("%s 1 %d ns/op\n", name, time.Since(start).Nanoseconds())
 }
 
-func runMakeBash() {
-	cmd := exec.Command("./make.bash")
+func runStdCmd() {
+	args := []string{"build", "-a"}
+	if *flagToolexec != "" {
+		args = append(args, "-toolexec", *flagToolexec)
+	}
+	args = append(args, "std", "cmd")
+	cmd := exec.Command("go", args...)
 	cmd.Dir = filepath.Join(runtime.GOROOT(), "src")
-	runCmd("BenchmarkMakeBash", cmd)
+	runCmd("BenchmarkStdCmd", cmd)
 }
 
-func runCmdGoSize() {
-	runSize("BenchmarkCmdGoSize", filepath.Join(runtime.GOROOT(), "bin/go"))
-}
-
-func runHelloSize() {
-	cmd := exec.Command("go", "build", "-o", "_hello_", filepath.Join(runtime.GOROOT(), "test/helloworld.go"))
+// path is either a path to a file ("$GOROOT/test/helloworld.go") or a package path ("cmd/go").
+func runSize(name, path string) {
+	args := []string{"build", "-o", "_compilebenchout_"}
+	if *flagToolexec != "" {
+		args = append(args, "-toolexec", *flagToolexec)
+	}
+	args = append(args, path)
+	cmd := exec.Command("go", args...)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		log.Print(err)
 		return
 	}
-	defer os.Remove("_hello_")
-	runSize("BenchmarkHelloSize", "_hello_")
-}
-
-func runSize(name, file string) {
-	info, err := os.Stat(file)
+	defer os.Remove("_compilebenchout_")
+	info, err := os.Stat("_compilebenchout_")
 	if err != nil {
 		log.Print(err)
 		return
 	}
-	out, err := exec.Command("size", file).CombinedOutput()
+	out, err := exec.Command("size", "_compilebenchout_").CombinedOutput()
 	if err != nil {
 		log.Printf("size: %v\n%s", err, out)
 		return
@@ -216,14 +228,14 @@ func runSize(name, file string) {
 
 func runBuild(name, dir string) {
 	switch name {
-	case "BenchmarkMakeBash":
-		runMakeBash()
+	case "BenchmarkStdCmd":
+		runStdCmd()
 		return
 	case "BenchmarkCmdGoSize":
-		runCmdGoSize()
+		runSize("BenchmarkCmdGoSize", "cmd/go")
 		return
 	case "BenchmarkHelloSize":
-		runHelloSize()
+		runSize("BenchmarkHelloSize", filepath.Join(runtime.GOROOT(), "test/helloworld.go"))
 		return
 	}
 
